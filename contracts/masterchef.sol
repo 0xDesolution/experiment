@@ -4,6 +4,8 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
 
 interface IMigratorChef {
     function migrate(IERC20 token) external returns (IERC20);
@@ -175,11 +177,16 @@ function deposit(uint256 _pid, uint256 _amount) public {
     UserInfo storage user = userInfo[_pid][msg.sender];
     updatePool(_pid);
     if (user.amount > 0) {
-        _harvest(_pid, msg.sender);
+        uint256 pending = user.amount * pool.accMochicumPerShare / 1e18 - user.rewardDebt;
+        if (pending > 0) {
+            safeMochicumTransfer(msg.sender, pending * 99 / 100);
+            safeMochicumTransfer(owner(), pending * 1 / 100);
+        }
     }
     if (_amount > 0) {
-        pool.lpToken.transferFrom(address(msg.sender), address(this), _amount);
-        user.amount += _amount;
+       // Transfer the LP tokens from the user to the masterchef contract
+        SafeERC20.safeTransferFrom(pool.lpToken, msg.sender, address(this), _amount);
+        user.amount = user.amount + _amount;
     }
     user.rewardDebt = user.amount * pool.accMochicumPerShare / 1e18;
     emit Deposit(msg.sender, _pid, _amount);
@@ -206,7 +213,11 @@ function harvest(uint256 _pid) public {
     PoolInfo storage pool = poolInfo[_pid];
     UserInfo storage user = userInfo[_pid][msg.sender];
     updatePool(_pid);
-    _harvest(_pid, msg.sender);
+      uint256 pending = user.amount * pool.accMochicumPerShare / 1e18 - user.rewardDebt;
+    if (pending > 0) {
+        safeMochicumTransfer(msg.sender, pending * 99 / 100);
+        safeMochicumTransfer(owner(), pending * 1 / 100);
+    }
     user.rewardDebt = user.amount * pool.accMochicumPerShare / 1e18;
     _harvest(_pid, msg.sender);  // Call _harvest as a regular function
 }
