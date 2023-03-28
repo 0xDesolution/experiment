@@ -7,6 +7,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 
+// Import SafeMath library
+import "@openzeppelin/contracts/utils/math/SafeMath.sol";
+
+
+
 interface IMigratorChef {
     function migrate(IERC20 token) external returns (IERC20);
 }
@@ -36,6 +41,7 @@ contract Mochicum is ERC20, Ownable {
 }
 
 contract MasterChef is Ownable {
+   using SafeMath for uint256; 
    struct UserInfo {
     uint256 amount;               // How many LP tokens the user has provided.
     uint256 rewardDebt;           // Reward debt. See explanation below.
@@ -52,12 +58,17 @@ contract MasterChef is Ownable {
     //   3. User's `rewardDebt` gets updated.
 }
 
-    struct PoolInfo {
-        IERC20 lpToken;
-        uint256 allocPoint;
-        uint256 lastRewardBlock;
-        uint256 accMochicumPerShare;
-    }
+ struct PoolInfo {
+    IERC20 lpToken;               // Address of LP token contract
+    uint256 allocPoint;           // How many allocation points assigned to this pool
+    uint256 lastRewardBlock;      // Last block number that reward distribution occurs
+    uint256 accMochicumPerShare;  // Accumulated mochicum per share, times 1e18
+    uint256 depositFeeRate;       // Deposit fee rate, in basis points
+    uint256 startBlock;
+    uint256 endBlock;
+    uint256 lpSupply;
+}
+
 
     Mochicum public mochicum;
     uint256 public mochicumPerBlock;
@@ -91,24 +102,33 @@ contract MasterChef is Ownable {
     }
 
     function add(
-        uint256 _allocPoint,
-        IERC20 _lpToken,
-        bool _withUpdate
-    ) public onlyOwner {
-        if (_withUpdate) {
-            massUpdatePools();
-        }
-        uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
-        totalAllocPoint += _allocPoint;
-        poolInfo.push(
-            PoolInfo({
-                lpToken: _lpToken,
-                allocPoint: _allocPoint,
-                lastRewardBlock: lastRewardBlock,
-                accMochicumPerShare: 0
-            })
-        );
+    uint256 _allocPoint,
+    IERC20 _lpToken,
+    uint16 _depositFeeRate,
+    bool _withUpdate,
+    uint256 _startBlock,
+    uint256 _endBlock
+) public onlyOwner {
+    require(_depositFeeRate <= 10000, "add: invalid deposit fee rate basis points");
+    if (_withUpdate) {
+        massUpdatePools();
     }
+    uint256 lastRewardBlock = block.number > _startBlock ? block.number : _startBlock;
+    totalAllocPoint = totalAllocPoint.add(_allocPoint); 
+    poolInfo.push(
+        PoolInfo({
+            lpToken: _lpToken,
+            allocPoint: _allocPoint,
+            lastRewardBlock: lastRewardBlock,
+            accMochicumPerShare: 0,
+            depositFeeRate: _depositFeeRate,
+            startBlock: _startBlock,
+            endBlock: _endBlock,
+            lpSupply: 0
+        })
+    );
+}
+
 
     function set(
         uint256 _pid,
@@ -184,11 +204,22 @@ function deposit(uint256 _pid, uint256 _amount) public {
         }
     }
     if (_amount > 0) {
-       // Transfer the LP tokens from the user to the masterchef contract
+         // Transfer the LP tokens from the user to the masterchef contract
         SafeERC20.safeTransferFrom(pool.lpToken, msg.sender, address(this), _amount);
-        user.amount = user.amount + _amount;
+        uint256 depositFee = _amount.mul(pool.depositFeeRate).div(10000);
+        user.amount = user.amount + _amount - depositFee;
+        user.rewardDebt = user.amount * pool.accMochicumPerShare / 1e18;
+        pool.lpSupply = pool.lpSupply.add(_amount).sub(depositFee);
+    if (depositFee > 0) {
+        SafeERC20.safeTransfer(pool.lpToken, owner(), depositFee);  // Transfer 2% deposit fee to owner
+        pool.lpSupply = pool.lpSupply.add(_amount).sub(depositFee); 
     }
-    user.rewardDebt = user.amount * pool.accMochicumPerShare / 1e18;
+    else {
+        pool.lpSupply = pool.lpSupply.add(_amount);
+    }
+
+    }
+    
     emit Deposit(msg.sender, _pid, _amount);
 }
 
